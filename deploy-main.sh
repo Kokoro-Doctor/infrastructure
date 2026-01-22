@@ -1,6 +1,6 @@
 #!/bin/bash
 # =================================================================
-# MAIN DEPLOYMENT SCRIPT - FIXED VERSION
+# MAIN DEPLOYMENT SCRIPT - OPENAI VERSION
 # Upload this to GitHub as: deploy-main.sh
 # =================================================================
 
@@ -16,6 +16,8 @@ APP_DIR="$FRONTEND_DIR/KokoroDoctor"
 RAG_BACKEND_DIR="/home/ubuntu/rag_backend"
 NODE_VERSION="18"
 EXPECTED_EIP="13.203.1.165"
+AWS_REGION="ap-south-1"  # Mumbai Region
+SSM_PARAM_NAME="/myapp/openai_api_key" # Jo naam aapne AWS Parameter Store mein rakha hai
 
 # === FUNCTIONS ===
 
@@ -65,20 +67,15 @@ install_pm2() {
     export NVM_DIR="/home/ubuntu/.nvm"
     [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
-    # Install PM2 and expo-cli
     sudo -u ubuntu bash << 'PM2SETUP'
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 npm install -g pm2 expo-cli
 PM2SETUP
 
-    # Setup PM2 startup - FIXED: Execute the command directly
     log "Setting up PM2 startup"
-    
-    # Get the node path
     local NODE_PATH="/home/ubuntu/.nvm/versions/node/v${NODE_VERSION}.20.8/bin"
     
-    # Execute PM2 startup command directly
     sudo env PATH=$PATH:$NODE_PATH $NODE_PATH/pm2 startup systemd -u ubuntu --hp /home/ubuntu || {
         log "PM2 startup setup completed (may have warnings)"
     }
@@ -114,6 +111,7 @@ setup_nginx() {
     aws s3 cp $S3_BUCKET/ssl/kokoro.doctor.fullchain.pem $SSL_CERT_PATH/ 2>/dev/null || err "SSL cert download failed"
     aws s3 cp $S3_BUCKET/ssl/kokoro.doctor.key $SSL_CERT_PATH/ 2>/dev/null || err "SSL key download failed"
 
+    # --- UPDATED NGINX CONFIG (REMOVED OLLAMA) ---
     cat > /etc/nginx/sites-available/default << 'NGINXCONF'
 server {
     listen 80;
@@ -142,13 +140,6 @@ server {
         proxy_set_header Host $host;
         proxy_connect_timeout 10s;
         proxy_read_timeout 60s;
-    }
-    location /ollama/ {
-        proxy_pass http://127.0.0.1:11434/;
-        proxy_http_version 1.1;
-        proxy_set_header Host 127.0.0.1;
-        proxy_connect_timeout 10s;
-        proxy_read_timeout 120s;
     }
 }
 NGINXCONF
@@ -214,6 +205,20 @@ setup_rag_backend() {
     mkdir -p "$RAG_BACKEND_DIR"
     chown -R ubuntu:ubuntu "$RAG_BACKEND_DIR"
 
+    # --- SECURITY UPDATE: Fetch API Key from SSM ---
+    log "Fetching OpenAI API Key from AWS Parameter Store..."
+    
+    # NOTE: Ensure the IAM role has ssm:GetParameter permission
+    API_KEY=$(aws ssm get-parameter --name "$SSM_PARAM_NAME" --with-decryption --query "Parameter.Value" --output text --region $AWS_REGION)
+    
+    if [ -z "$API_KEY" ] || [ "$API_KEY" == "None" ]; then
+        err "CRITICAL: Could not fetch API Key from AWS SSM!"
+        # Exit or continue depending on your preference. 
+        # For now we log error but continue (setup might fail later).
+    else
+        log "API Key fetched successfully."
+    fi
+
     log "Setting up RAG backend code"
     sudo -u ubuntu bash << RAGSETUP
 cd $RAG_BACKEND_DIR
@@ -225,6 +230,11 @@ else
     git pull origin main || true
 fi
 
+# --- CREATE .env FILE ---
+echo "Creating .env file..."
+echo "OPENAI_API_KEY=$API_KEY" > .env
+chmod 600 .env
+
 echo "Setting up Python virtual environment..."
 rm -rf venv
 python3 -m venv venv
@@ -233,6 +243,7 @@ source venv/bin/activate
 echo "Installing Python dependencies..."
 pip install --upgrade pip
 pip install -r requirements.txt
+pip install python-dotenv  # Ensure dotenv is installed
 
 echo "Verifying critical packages..."
 pip list | grep -E "uvicorn|fastapi" || pip install uvicorn fastapi
@@ -256,6 +267,10 @@ if [ ! -f venv/bin/python ]; then
     exit 1
 fi
 
+if [ ! -f .env ]; then
+    echo "WARNING: .env file is missing! App may fail."
+fi
+
 pm2 delete rag-backend 2>/dev/null || true
 pm2 start venv/bin/python --name rag-backend --interpreter none -- -m uvicorn app:app --host 0.0.0.0 --port 8000
 pm2 save
@@ -264,48 +279,6 @@ STARTRAG
     sleep 2
     log "RAG backend started - checking status..."
     sudo -u ubuntu bash -c 'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; pm2 list | grep rag-backend'
-}
-
-setup_ollama() {
-    log "Installing Ollama"
-    curl -fsSL https://ollama.com/install.sh | sh
-
-    log "Creating Ollama systemd service"
-    cat > /etc/systemd/system/ollama.service << 'OLLAMASVC'
-[Unit]
-Description=Ollama Service
-After=network-online.target
-[Service]
-ExecStart=/usr/local/bin/ollama serve
-User=root
-Restart=always
-RestartSec=3
-[Install]
-WantedBy=default.target
-OLLAMASVC
-
-    systemctl daemon-reload
-    systemctl enable ollama
-    systemctl start ollama
-    
-    log "Waiting for Ollama to start"
-    local retries=15
-    while [ $retries -gt 0 ]; do
-        if curl -s http://localhost:11434 >/dev/null 2>&1; then
-            log "Ollama is ready"
-            break
-        fi
-        sleep 5
-        ((retries--))
-        if [ $retries -eq 7 ]; then
-            log "Restarting Ollama..."
-            systemctl restart ollama
-        fi
-    done
-    
-    log "Pulling llama3 model (this may take 5-10 minutes)..."
-    ollama pull llama3
-    log "Ollama setup completed"
 }
 
 create_check_services() {
@@ -323,14 +296,11 @@ echo ""
 echo "Nginx Status:"
 systemctl status nginx --no-pager | head -5
 echo ""
-echo "Ollama Status:"
-systemctl status ollama --no-pager | head -5
-echo ""
 echo "EFS Mount:"
 df -h | grep efs || echo "EFS not mounted"
 echo ""
 echo "=== PORT CHECKS ==="
-for port in 8081:Frontend 8000:RAG-Backend 11434:Ollama; do
+for port in 8081:Frontend 8000:RAG-Backend; do
     IFS=':' read -r pnum pname <<< "$port"
     echo -n "$pname ($pnum): "
     curl -s http://localhost:$pnum >/dev/null && echo "✓ Running" || echo "✗ Not responding"
@@ -343,7 +313,7 @@ HEALTH
 # === MAIN EXECUTION ===
 
 echo "========================================"
-echo "🚀 Kokoro Doctor Deployment"
+echo "🚀 Kokoro Doctor Deployment (OpenAI Version)"
 echo "========================================"
 echo "Start Time: $(date)"
 echo ""
@@ -357,7 +327,7 @@ setup_env
 
 log "Installing system dependencies"
 apt-get update -y
-apt-get install -y git curl build-essential
+apt-get install -y git curl build-essential awscli
 
 install_node
 install_pm2
@@ -370,13 +340,11 @@ start_frontend
 log "Frontend is now live at https://$DOMAIN"
 
 echo ""
-log "=== STAGE 2: RAG Backend ==="
+log "=== STAGE 2: RAG Backend (with Secure Key Fetch) ==="
 setup_rag_backend
 start_rag_backend
 
-echo ""
-log "=== STAGE 3: Ollama (This takes time) ==="
-setup_ollama
+# Removed STAGE 3: Ollama (No longer needed)
 
 # Final PM2 save
 log "Saving PM2 configuration"
@@ -391,18 +359,11 @@ echo "==========================================="
 echo ""
 echo "🌐 Frontend: https://$DOMAIN"
 echo "🤖 RAG Backend: Running on port 8000"
-echo "🦙 Ollama: Running on port 11434"
+echo "🔑 Security: OpenAI API Key fetched from AWS Parameter Store"
 echo ""
 echo "📊 Service Management:"
-echo "  - PM2 will persist after reboot"
 echo "  - Use 'pm2 list' to check running processes"
-echo "  - Use 'pm2 logs [app-name]' to view logs"
 echo "  - Use './check-services.sh' for quick status check"
-echo ""
-echo "🔧 Troubleshooting:"
-echo "  - If RAG backend crashes: cd ~/rag_backend && pm2 logs rag-backend"
-echo "  - Restart services: pm2 restart all"
-echo "  - Check Nginx: sudo nginx -t && sudo systemctl status nginx"
 echo ""
 echo "End Time: $(date)"
 echo "========================================"
