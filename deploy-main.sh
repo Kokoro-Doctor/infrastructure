@@ -14,7 +14,7 @@ DOMAIN="kokoro.doctor"
 FRONTEND_DIR="/home/ubuntu/frontend"
 APP_DIR="$FRONTEND_DIR/KokoroDoctor"
 RAG_BACKEND_DIR="/home/ubuntu/rag_backend"
-NODE_VERSION="18"
+NODE_VERSION="20"
 EXPECTED_EIP="13.203.1.165"
 AWS_REGION="ap-south-1"  # Mumbai Region
 SSM_PARAM_NAME="/myapp/openai_api_key" # Jo naam aapne AWS Parameter Store mein rakha hai
@@ -33,7 +33,7 @@ setup_env() {
         cat >> /home/ubuntu/.bashrc << 'EOF'
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-export PATH=$HOME/.nvm/versions/node/v18/bin:$PATH
+export PATH=$HOME/.nvm/versions/node/v20/bin:$PATH
 EOF
     fi
     source /home/ubuntu/.bashrc 2>/dev/null || true
@@ -51,9 +51,9 @@ install_node() {
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-nvm install 18
-nvm use 18
-nvm alias default 18
+nvm install 20
+nvm use 20
+nvm alias default 20
 NODESETUP
 
     export NVM_DIR="/home/ubuntu/.nvm"
@@ -180,7 +180,7 @@ start_frontend() {
     sudo -u ubuntu bash << STARTFRONT
 export NVM_DIR="\$HOME/.nvm"
 [ -s "\$NVM_DIR/nvm.sh" ] && \. "\$NVM_DIR/nvm.sh"
-export PATH=\$HOME/.nvm/versions/node/v18/bin:\$PATH
+export PATH=\$HOME/.nvm/versions/node/v20/bin:\$PATH
 cd "$APP_DIR"
 pm2 delete expo-app 2>/dev/null || true
 pm2 start "npx expo start --web --port 8081" --name expo-app
@@ -259,7 +259,7 @@ start_rag_backend() {
     sudo -u ubuntu bash << STARTRAG
 export NVM_DIR="\$HOME/.nvm"
 [ -s "\$NVM_DIR/nvm.sh" ] && \. "\$NVM_DIR/nvm.sh"
-export PATH=\$HOME/.nvm/versions/node/v18/bin:\$PATH
+export PATH=\$HOME/.nvm/versions/node/v20/bin:\$PATH
 cd $RAG_BACKEND_DIR
 
 if [ ! -f venv/bin/python ]; then
@@ -287,7 +287,7 @@ create_check_services() {
 #!/bin/bash
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-export PATH=$HOME/.nvm/versions/node/v18/bin:$PATH
+export PATH=$HOME/.nvm/versions/node/v20/bin:$PATH
 
 echo "=== SERVICE STATUS ==="
 echo "PM2 Processes:"
