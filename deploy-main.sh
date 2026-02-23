@@ -103,49 +103,34 @@ setup_nginx() {
     
     apt-get update -y
     apt-get install -y nginx awscli
-    
-    mkdir -p /etc/nginx/sites-{available,enabled} $SSL_CERT_PATH
-    chmod 700 $SSL_CERT_PATH
 
-    log "Downloading SSL certificates"
-    aws s3 cp $S3_BUCKET/ssl/kokoro.doctor.fullchain.pem $SSL_CERT_PATH/ 2>/dev/null || err "SSL cert download failed"
-    aws s3 cp $S3_BUCKET/ssl/kokoro.doctor.key $SSL_CERT_PATH/ 2>/dev/null || err "SSL key download failed"
+    rm /etc/nginx/sites-enabled/default
+    touch /etc/nginx/sites-available/kokoro
+
 
     # --- UPDATED NGINX CONFIG (REMOVED OLLAMA) ---
-    cat > /etc/nginx/sites-available/default << 'NGINXCONF'
+    cat > /etc/nginx/sites-available/kokoro << 'NGINXCONF'
 server {
     listen 80;
     server_name kokoro.doctor www.kokoro.doctor;
-    return 301 https://$host$request_uri;
-}
-server {
-    listen 443 ssl;
-    server_name kokoro.doctor www.kokoro.doctor;
-    ssl_certificate /etc/ssl/kokoro/kokoro.doctor.fullchain.pem;
-    ssl_certificate_key /etc/ssl/kokoro/kokoro.doctor.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    
+
     location / {
         proxy_pass http://127.0.0.1:8081;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
-        proxy_connect_timeout 10s;
-        proxy_read_timeout 60s;
     }
+
     location /chat {
         proxy_pass http://127.0.0.1:8000;
-        proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_connect_timeout 10s;
-        proxy_read_timeout 60s;
     }
 }
 NGINXCONF
 
     nginx -t
-    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/
+    ln -s /etc/nginx/sites-available/kokoro /etc/nginx/sites-enabled/
     systemctl enable nginx
     systemctl restart nginx
     log "Nginx configured and running"
