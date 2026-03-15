@@ -17,7 +17,7 @@ RAG_BACKEND_DIR="/home/ubuntu/rag_backend"
 NODE_VERSION="20"
 EXPECTED_EIP="13.203.1.165"
 AWS_REGION="ap-south-1"  # Mumbai Region
-SSM_PARAM_NAME="/myapp/openai_api_key" # Jo naam aapne AWS Parameter Store mein rakha hai
+SSM_PARAM_NAME="/myapp/groq_api_key" # Jo naam aapne AWS Parameter Store mein rakha hai
 
 # === FUNCTIONS ===
 
@@ -191,7 +191,7 @@ setup_rag_backend() {
     chown -R ubuntu:ubuntu "$RAG_BACKEND_DIR"
 
     # --- SECURITY UPDATE: Fetch API Key from SSM ---
-    log "Fetching OpenAI API Key from AWS Parameter Store..."
+    log "Fetching Groq API Key from AWS Parameter Store..."
     
     # NOTE: Ensure the IAM role has ssm:GetParameter permission
     API_KEY=$(aws ssm get-parameter --name "$SSM_PARAM_NAME" --with-decryption --query "Parameter.Value" --output text --region $AWS_REGION)
@@ -217,7 +217,7 @@ fi
 
 # --- CREATE .env FILE ---
 echo "Creating .env file..."
-echo "OPENAI_API_KEY=$API_KEY" > .env
+echo "GROQ_API_KEY=$API_KEY" > .env
 chmod 600 .env
 
 echo "Setting up Python virtual environment..."
@@ -298,7 +298,7 @@ HEALTH
 # === MAIN EXECUTION ===
 
 echo "========================================"
-echo "🚀 Kokoro Doctor Deployment (OpenAI Version)"
+echo "🚀 Kokoro Doctor Deployment (Groq Version)"
 echo "========================================"
 echo "Start Time: $(date)"
 echo ""
@@ -344,7 +344,7 @@ echo "==========================================="
 echo ""
 echo "🌐 Frontend: https://$DOMAIN"
 echo "🤖 RAG Backend: Running on port 8000"
-echo "🔑 Security: OpenAI API Key fetched from AWS Parameter Store"
+echo "🔑 Security: Groq API Key fetched from AWS Parameter Store"
 echo ""
 echo "📊 Service Management:"
 echo "  - Use 'pm2 list' to check running processes"
